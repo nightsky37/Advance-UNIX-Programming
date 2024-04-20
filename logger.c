@@ -71,11 +71,9 @@ int main(int argc, char *argv[])
             perror("setenv failed:");
         }
     }
-
+    
     strcat(cmd, " ");
     strcat(cmd, addrs);
-    // printf("cmd= %s\n", cmd);
     system(cmd);
     free(cmd);
-    free(addrs);
 }
