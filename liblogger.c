@@ -18,8 +18,8 @@
 #include <sys/socket.h>
 #include <netdb.h>
 
-#define RULE_LEN 100
-#define LINE_LEN 200
+#define RULE_LEN 128
+#define LINE_LEN 256
 char openBlacklist[RULE_LEN][LINE_LEN];
 char readBlacklist[LINE_LEN];
 char writeBlacklist[RULE_LEN][LINE_LEN];
@@ -47,6 +47,8 @@ void printBlackList() {
     for(int i=0; i<open_idx; i++) {
         printf("%s\n", openBlacklist[i]);
     }
+
+    printf("%s\n", readBlacklist);
     for(int i=0; i<write_idx; i++) {
         printf("%s\n", writeBlacklist[i]);
     }
@@ -71,6 +73,7 @@ void readConfig() {
             if(s != '\n')
                 line[idx++] = s;
             else {
+                line[idx++] = '\0';
                 strcpy(blacklist[list_idx++], line);                
                 memset(line, '\0', sizeof(line));
                 idx = 0;
@@ -80,11 +83,7 @@ void readConfig() {
     }
     else
         perror("open");
-
-    printf("blk: %d", strcmp(blacklist[0], "BEGIN open-blacklist"));
-    for(int i=0; i<list_idx; i++){
-        // printf("r=%d i=%d\n", strncmp(blacklist[i++], "BEGIN open-blacklist", strlen(blacklist[i])), i);
-        
+    for(int i=0; i<list_idx; i++){        
         if(strcmp(blacklist[i++], "BEGIN open-blacklist") == 0){
             while (strcmp(blacklist[i], "END open-blacklist") != 0)
             {
@@ -120,8 +119,7 @@ void readConfig() {
         }
     }
 
-    printf("idx= %d, %d, %d, %d, %d", open_idx, write_idx, connect_idx, addr_idx, list_idx);
-    printBlackList();
+    // printf("idx= %d, %d, %d, %d, %d", open_idx, write_idx, connect_idx, addr_idx, list_idx);
 }
 
 
@@ -137,37 +135,71 @@ char *removeExtension(char* myStr) {
     return retStr;
 }
 
+char *removeWildcard(const char* myStr) {
+    char *retStr;
+    char *lastExt;
+    if (myStr == NULL) return NULL;
+    if ((retStr = malloc (strlen (myStr) + 1)) == NULL) return NULL;
+    strcpy (retStr, myStr);
+    lastExt = strrchr (retStr, '*');
+    if (lastExt != NULL)
+        *lastExt = '\0';
+    return retStr;
+}
+
+char *getRealPath(const char *path) {
+    char *rlpath = malloc(1024);
+    char *res = realpath(path, rlpath);
+    if(res) {
+        // printf("real path: %s\n", rlpath);
+        return rlpath;
+    }        
+    else {
+        //perror("realpath");
+        return NULL;
+    }
+    
+    return rlpath;
+}
+
 bool isInBlackList(const char *path, const char *api) {
     if(!isReadConfig) {
         readConfig();
         isReadConfig = true;
     }
     // printBlackList();
-    if(strcmp(api, "open") == 0) {
+
+    if(strcmp(api, "open") == 0) {        
+        char *rlPath = getRealPath(path);
         for(int i=0; i<open_idx; i++){
-            if(fnmatch(openBlacklist[i], path, 0) == 0) {
+            char *tmp = removeWildcard(openBlacklist[i]);
+            char *realBlklistPath = getRealPath(tmp);
+            if(realBlklistPath != NULL && strstr(rlPath, realBlklistPath) == rlPath) {
+                // printf("strstr=%s\n", strstr(rlPath, realBlklistPath));
                 return true;
             }
         }
     }
-    if(strcmp(api, "write") == 0) {
-        for(int i=0; i<open_idx; i++){
-            if(fnmatch(openBlacklist[i], path, 0) == 0) {
+    if(strcmp(api, "write") == 0) {        
+        char *rlPath = getRealPath(path);
+        for(int i=0; i<open_idx; i++) {
+            char *tmp = removeWildcard(openBlacklist[i]);
+            char *realBlklistPath = getRealPath(tmp);
+            if(realBlklistPath != NULL && (rlPath, realBlklistPath) == rlPath) {
+                // printf("strstr=%s\n", strstr(rlPath, realBlklistPath));
                 return true;
             }
         }
         for(int i=0; i<write_idx; i++){
-            if(fnmatch(writeBlacklist[i], path, 0) == 0) {
+            char *tmp = removeWildcard(writeBlacklist[i]);
+            char *realBlklistPath = getRealPath(tmp);
+            if(strstr(rlPath, realBlklistPath) == rlPath) {
+                // printf("strstr=%s\n", strstr(rlPath, realBlklistPath));
                 return true;
             }
         }
     }
     if(strcmp(api, "read") == 0) {
-        for(int i=0; i<open_idx; i++){
-            if(fnmatch(openBlacklist[i], path, 0) == 0) {
-                return true;
-            }
-        }
         if(fnmatch(readBlacklist, path, 0) == 0) {
             return true;
         }
@@ -229,6 +261,11 @@ FILE* fopen(const char *path, const char *mode) {
     else
         output = fopen_old(outpath, "a");
 
+    // FILE *ftmp = fopen_old(path, mode);
+    // char *filepath = getFilepath(ftmp);
+    // printf("real file path=%s\n", filepath);
+
+
     // int isSymlink = isSymbolicLink(path);
     // if (isSymlink == -1) {
     //     perror("symlink failed");
@@ -276,6 +313,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     else
         output = fopen_old(outpath, "a");
     
+    // if the file has been blocked by open block list already
 
     char *filepath = getFilepath(stream);
     char *filename = basename(filepath);
@@ -309,9 +347,9 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
             fprintf(stderr, "[logger] fread(\"%p\", %ld, %ld, %p) = 0\n", \
                     ptr, size, nmemb, stream);
         }
-        fprintf(logfile, "[logger] fread(\"%p\", %ld, %ld, %p) = 0\n", \
-                    ptr, size, nmemb, stream);
-        fclose(logfile);
+        // fprintf(logfile, "[logger] fread(\"%p\", %ld, %ld, %p) = 0\n", \
+        //             ptr, size, nmemb, stream);
+        // fclose(logfile);
         errno = EACCES;
         return 0;
     }
@@ -347,14 +385,6 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     else
         output = fopen_old(outpath, "a");
 
-    char *filepath = getFilepath(stream);
-    char *filename = basename(filepath);
-
-    filename = removeExtension(filename);
-    char LogfileName[100];
-    sprintf(LogfileName, "%d-%s-%s.log", getpid(), filename, "write");
-    FILE *logfile = fopen_old(LogfileName, "a");
-
     // make the string print out "\n" instead of a newline
     char *str = (char*) ptr;
     char buf[1000];
@@ -370,6 +400,29 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     }
     buf[buf_idx] = 0;
 
+    // if the file has been blocked by open block list already
+    if(stream == NULL) {
+        if(outpath != NULL){            
+            fprintf(output, "[logger] fwrite(\"%s\", %ld, %ld, 0x0) = 0\n", \
+                    buf, size, nmemb);
+        } 
+        else {
+            fprintf(stderr, "[logger] fwrite(\"%s\", %ld, %ld, 0x0) = 0\n", \
+                    buf, size, nmemb);
+        }
+        return 0;
+    }
+
+    char *filepath = getFilepath(stream);
+    char *filename = basename(filepath);
+
+    filename = removeExtension(filename);
+    char LogfileName[100];
+    sprintf(LogfileName, "%d-%s-%s.log", getpid(), filename, "write");
+    FILE *logfile = fopen_old(LogfileName, "a");
+
+    
+
     if(isInBlackList(filepath, "write")) {
         if(outpath != NULL){            
             fprintf(output, "[logger] fwrite(\"%s\", %ld, %ld, %p) = 0\n", \
@@ -379,9 +432,9 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
             fprintf(stderr, "[logger] fwrite(\"%s\", %ld, %ld, %p) = 0\n", \
                     buf, size, nmemb, stream);
         }
-        fprintf(logfile, "[logger] fwrite(\"%s\", %ld, %ld, %p) = 0\n", \
-                    buf, size, nmemb, stream);
-        fclose(logfile);
+        // fprintf(logfile, "[logger] fwrite(\"%s\", %ld, %ld, %p) = 0\n", \
+        //             buf, size, nmemb, stream);
+        // fclose(logfile);
         errno = EACCES;
         return 0;
     }
@@ -405,7 +458,7 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
     else {
         fprintf(stderr, "[logger] fwrite(\"%s\", %ld, %ld, %p) = %ld\n", \
                 buf, size, nmemb, stream, n);
-    }    
+    }
 
     // fprintf(logfile, "[logger] fwrite(\"%s\", %ld, %ld, %p) = 0\n", \
     //         buf, size, nmemb, stream);
@@ -429,22 +482,19 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     else
         output = fopen_old(outpath, "a");
     
-    // // split addresses
-    // char *addr_list = getenv("EXTARGS");
-    // char *address = strtok(addr_list, " ");
-    // char *tmp = address;
+    // split addresses
+    char *addr_list = getenv("EXTARGS");
+    char *address = strtok(addr_list, " ");
+    char *tmp = address;
     
-    // printf("addr= %swww", address);
-    // printBlackList();
-    if(isInBlackList(addr->sa_data, "connect")) {
-        
+    if(isInBlackList(address, "connect")) {
         if(outpath != NULL){            
             fprintf(output, "[logger] connect(%d, \"%s\", %d) = -1\n", \
-                    sockfd, addr->sa_data, addrlen);
+                    sockfd, address, addrlen);
         } 
         else {
             fprintf(stderr, "[logger] connect(%d, \"%s\", %d) = -1\n", \
-                    sockfd, addr->sa_data, addrlen);
+                    sockfd, address, addrlen);
         }
         errno = ECONNREFUSED;
         return -1;
@@ -455,12 +505,15 @@ int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
 
     if(outpath != NULL){            
         fprintf(output, "[logger] connect(%d, \"%s\", %d) = %d\n", \
-                sockfd, addr->sa_data, addrlen, rvalue);
+                sockfd, address, addrlen, rvalue);
     } 
     else {
         fprintf(stderr, "[logger] connect(%d, \"%s\", %d) = %d\n", \
-                sockfd, addr->sa_data, addrlen, rvalue);
+                sockfd, address, addrlen, rvalue);
     }
+
+    if(output != NULL) 
+        fclose(output);
 
     return rvalue;
 }
@@ -483,11 +536,11 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
 
     if(isInBlackList(node, "getaddrinfo")) {
         if(outpath != NULL){            
-            fprintf(output, "[logger] getaddrinfo(\"%s\", %p, %p, %p) = 0\n", \
+            fprintf(output, "[logger] getaddrinfo(\"%s\", %p, %p, %p) = -1\n", \
                     node, service, hints, res);
         } 
         else {
-            fprintf(stderr, "[logger] getaddrinfo(\"%s\", %p, %p, %p) = 0\n", \
+            fprintf(stderr, "[logger] getaddrinfo(\"%s\", %p, %p, %p) = -1\n", \
                     node, service, hints, res);
         }
         return EAI_NONAME; 
@@ -505,9 +558,35 @@ int getaddrinfo(const char *node, const char *service, const struct addrinfo *hi
                 node, service, hints, res, rvalue);
     }
 
+    if(output != NULL) 
+        fclose(output);
+
     return rvalue;
 }
 
 int system(const char *command) {
+    char *outpath = getenv("OUTPATH");    
+    fopen_old = dlsym(RTLD_NEXT, "fopen");
+    FILE *output;
+    if(!isOpenOutput) {
+        output = fopen_old(outpath, "w");
+        isOpenOutput = true;
+    }
+    else
+        output = fopen_old(outpath, "a");
 
+    system_old = dlsym(RTLD_NEXT, "system");
+    int rvalue = system_old(command);
+
+    if(outpath != NULL){            
+        fprintf(output, "[logger] system(\"%s\") = %d\n", command, rvalue);
+    } 
+    else {
+        fprintf(stderr, "[logger] system(\"%s\") = %d\n", command, rvalue);
+    }
+
+    if(output != NULL) 
+        fclose(output);
+
+    return rvalue; 
 }
