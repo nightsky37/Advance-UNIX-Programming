@@ -155,7 +155,7 @@ char *getRealPath(const char *path) {
         return rlpath;
     }        
     else {
-        //perror("realpath");
+        // perror("realpath");
         return NULL;
     }
     
@@ -169,7 +169,7 @@ bool isInBlackList(const char *path, const char *api) {
     }
     // printBlackList();
 
-    if(strcmp(api, "open") == 0) {        
+    if(strcmp(api, "open") == 0) {      
         char *rlPath = getRealPath(path);
         for(int i=0; i<open_idx; i++){
             char *tmp = removeWildcard(openBlacklist[i]);
@@ -180,7 +180,7 @@ bool isInBlackList(const char *path, const char *api) {
             }
         }
     }
-    if(strcmp(api, "write") == 0) {        
+    if(strcmp(api, "write") == 0) {     
         char *rlPath = getRealPath(path);
         for(int i=0; i<open_idx; i++) {
             char *tmp = removeWildcard(openBlacklist[i]);
@@ -260,22 +260,8 @@ FILE* fopen(const char *path, const char *mode) {
     }
     else
         output = fopen_old(outpath, "a");
-
-    // FILE *ftmp = fopen_old(path, mode);
-    // char *filepath = getFilepath(ftmp);
-    // printf("real file path=%s\n", filepath);
-
-
-    // int isSymlink = isSymbolicLink(path);
-    // if (isSymlink == -1) {
-    //     perror("symlink failed");
-    //     return NULL;
-    // } 
-    // else if (isSymlink) {
-    //     printf("%s is a symbolic link\n", path);
-    // }
-    // else
-    //     printf("%s is not a symbolic link\n", path);
+    
+    FILE *ftmp = fopen_old(path, mode);
 
     if(isInBlackList(path, "open")) {
         if(outpath != NULL){            
@@ -284,10 +270,13 @@ FILE* fopen(const char *path, const char *mode) {
         else {
             fprintf(stderr, "[logger] fopen(\"%s\", \"%s\") = 0x0\n", path, mode);
         }
+        
+        fclose(ftmp);
+        remove(path);
         errno = EACCES;
         return NULL;
     }
-    
+
     FILE *fp = fopen_old(path, mode);
     if(outpath != NULL) {
         fprintf(output, "[logger] fopen(\"%s\", \"%s\") = %p\n", path, mode, fp);
@@ -295,7 +284,7 @@ FILE* fopen(const char *path, const char *mode) {
     else {
         fprintf(stderr, "[logger] fopen(\"%s\", \"%s\") = %p\n", path, mode, fp);
     }
-    
+
     if(output != NULL)
         fclose(output);
         
@@ -415,13 +404,12 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
 
     char *filepath = getFilepath(stream);
     char *filename = basename(filepath);
+    printf("path=%s\n", filepath);
 
     filename = removeExtension(filename);
     char LogfileName[100];
     sprintf(LogfileName, "%d-%s-%s.log", getpid(), filename, "write");
     FILE *logfile = fopen_old(LogfileName, "a");
-
-    
 
     if(isInBlackList(filepath, "write")) {
         if(outpath != NULL){            
